@@ -6,6 +6,7 @@ import ch.ethz.tell.Table
 import ch.ethz.tell.Transaction
 import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.ConnectorMetadata
+import com.facebook.presto.spi.predicate.TupleDomain
 import com.facebook.presto.spi.type.BigintType
 import com.facebook.presto.spi.type.DoubleType
 import com.facebook.presto.spi.type.VarbinaryType
@@ -67,8 +68,12 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
         throw RuntimeException("tableName is null")
     }
 
-    override fun getTableLayouts(session: ConnectorSession?, table: ConnectorTableHandle?, constraint: Constraint<ColumnHandle>?, desiredColumns: Optional<MutableSet<ColumnHandle>>?): MutableList<ConnectorTableLayoutResult>? {
-        throw UnsupportedOperationException()
+    override fun getTableLayouts(session: ConnectorSession?, table: ConnectorTableHandle?, constraint: Constraint<ColumnHandle>, desiredColumns: Optional<MutableSet<ColumnHandle>>): MutableList<ConnectorTableLayoutResult>? {
+        if (table !is TellTableHandle) {
+            val typename = table?.javaClass?.name ?: "null"
+            throw RuntimeException("table is not from tell (type is $typename)")
+        }
+        return ImmutableList.of(ConnectorTableLayoutResult(ConnectorTableLayout(table), TupleDomain.none()))
     }
 
     override fun getTableLayout(session: ConnectorSession?, handle: ConnectorTableLayoutHandle?): ConnectorTableLayout? {
