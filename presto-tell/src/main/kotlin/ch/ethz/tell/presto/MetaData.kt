@@ -13,6 +13,7 @@ import com.facebook.presto.spi.type.VarbinaryType
 import com.facebook.presto.spi.type.VarcharType
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
+import com.google.common.collect.ImmutableSet
 import java.util.*
 
 object TableCache {
@@ -51,18 +52,30 @@ object TableCache {
     }
 }
 
+object PrimaryKeyColumn {
+    val column = ColumnMetadata("__key", BigintType.BIGINT, true);
+}
+
+object DefaultSchema {
+    val name = "default"
+}
+
 class TellTableHandle(val table: Table) : ConnectorTableHandle
+class TellTableLayoutHandle(val table: Table) : ConnectorTableLayoutHandle
 
 class PrimaryKeyColumnHandle : ColumnHandle
-class TellColumnHandle(val field: Field) : ColumnHandle
+
+class TellColumnHandle(val field: Field) : ColumnHandle {
+
+}
 
 class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
     override fun listSchemaNames(session: ConnectorSession?): MutableList<String>? {
-        return ImmutableList.of("")
+        return ImmutableList.of(DefaultSchema.name)
     }
 
     override fun getTableHandle(session: ConnectorSession?, tableName: SchemaTableName?): ConnectorTableHandle? {
-        if (tableName != null) {
+        if (tableName != null && tableName.schemaName == DefaultSchema.name) {
             return TellTableHandle(TableCache.openTable(transaction, tableName.tableName))
         }
         throw RuntimeException("tableName is null")
@@ -73,7 +86,14 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
             val typename = table?.javaClass?.name ?: "null"
             throw RuntimeException("table is not from tell (type is $typename)")
         }
-        return ImmutableList.of(ConnectorTableLayoutResult(ConnectorTableLayout(table), TupleDomain.none()))
+        val columns = if (desiredColumns.isPresent) ImmutableList.copyOf(desiredColumns.get()) else ImmutableList.copyOf(getColumnHandles(session, table).values)
+        val layout = ConnectorTableLayout(TellTableLayoutHandle(table.table),
+                Optional.of(columns),
+                constraint.summary,
+                Optional.of(ImmutableSet.of<ColumnHandle>(PrimaryKeyColumnHandle())),
+                Optional.of(ImmutableList.of(constraint.summary)),
+                ImmutableList.of<LocalProperty<ColumnHandle>>())
+        return ImmutableList.of(ConnectorTableLayoutResult(layout, TupleDomain.none()))
     }
 
     override fun getTableLayout(session: ConnectorSession?, handle: ConnectorTableLayoutHandle?): ConnectorTableLayout? {
@@ -87,14 +107,14 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
         columns.forEach {
             builder.add(getColumnMetadata(session, table, it.value))
         }
-        return ConnectorTableMetadata(SchemaTableName("", table.table.tableName), builder.build())
+        return ConnectorTableMetadata(SchemaTableName(DefaultSchema.name, table.table.tableName), builder.build())
     }
 
     override fun listTables(session: ConnectorSession?, schemaNameOrNull: String?): MutableList<SchemaTableName>? {
-        if (schemaNameOrNull != null || schemaNameOrNull != "") {
+        if (schemaNameOrNull != null && schemaNameOrNull != DefaultSchema.name) {
             throw RuntimeException("Schemas not supported by tell but $schemaNameOrNull was given")
         }
-        return ImmutableList.copyOf(TableCache.getTableNames(transaction).map { SchemaTableName("", it) })
+        return ImmutableList.copyOf(TableCache.getTableNames(transaction).map { SchemaTableName(DefaultSchema.name, it) })
     }
 
     override fun getColumnHandles(session: ConnectorSession?, tableHandle: ConnectorTableHandle?): MutableMap<String, ColumnHandle> {
@@ -123,7 +143,7 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
 
     override fun getColumnMetadata(session: ConnectorSession?, tableHandle: ConnectorTableHandle?, columnHandle: ColumnHandle): ColumnMetadata? {
         if (columnHandle is PrimaryKeyColumnHandle) {
-            return ColumnMetadata("__key", BigintType.BIGINT, true);
+            return ColumnMetadata("__key", BigintType.BIGINT, true)
         }
         if (columnHandle !is TellColumnHandle) {
             throw RuntimeException("columnHandle is not from Tell")
@@ -146,7 +166,7 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
                     val field = schema.getFieldByName(it)
                     b.add(getMetadata(field.fieldName, field.fieldType))
                 }
-                builder.put(SchemaTableName("", it.key), b.build())
+                builder.put(SchemaTableName(DefaultSchema.name, it.key), b.build())
             }
         }
         return builder.build()
