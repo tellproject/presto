@@ -1,6 +1,7 @@
 package ch.ethz.tell.presto
 
 import ch.ethz.tell.ClientManager
+import ch.ethz.tell.ScanMemoryManager
 import ch.ethz.tell.Transaction
 import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.Connector
@@ -11,6 +12,7 @@ import com.facebook.presto.spi.connector.ConnectorSplitManager
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle
 import com.facebook.presto.spi.transaction.IsolationLevel
 import com.google.common.collect.ImmutableList
+import org.apache.commons.logging.LogFactory
 
 class TellHandleResolver : ConnectorHandleResolver {
     override fun getTableHandleClass(): Class<out ConnectorTableHandle>? {
@@ -22,7 +24,7 @@ class TellHandleResolver : ConnectorHandleResolver {
     }
 
     override fun getColumnHandleClass(): Class<out ColumnHandle>? {
-        return TellColumnHandle::class.java
+        return TellColumnHandleBase::class.java
     }
 
     override fun getSplitClass(): Class<out ConnectorSplit>? {
@@ -34,24 +36,44 @@ class TellHandleResolver : ConnectorHandleResolver {
     }
 }
 
-object ClientManagerSingleton {
-    private var clientManager: ClientManager? = null
+object TellConnection {
+    var clientManager: ClientManager? = null
+    var scanMemoryManager: ScanMemoryManager? = null
+
+    val log = LogFactory.getLog(TellConnection::class.java)
 
     fun clientManager(config: MutableMap<String, String>): ClientManager {
         if (clientManager == null) {
             synchronized(this) {
                 if (clientManager == null) {
-                    clientManager = ClientManager(config.get("tell.commitManager"), config.get("tell.storages"));
+                    log.info("Initializing ClientManager")
+                    clientManager = ClientManager(config["tell.commitManager"], config["tell.storages"]);
                 }
             }
         }
         return clientManager!!
     }
+
+    fun scanMemoryManager(config: MutableMap<String, String>): ScanMemoryManager {
+        if (scanMemoryManager == null) {
+            synchronized(this) {
+                if (scanMemoryManager == null) {
+                    log.info("Initialize ScanMemoryManager")
+                    scanMemoryManager = ScanMemoryManager(
+                            clientManager(config),
+                            config["tell.chunkCount"]?.toLong() ?: throw RuntimeException("chunkCount not set"),
+                            config["tell.chunkSize"]?.toLong() ?: throw RuntimeException("chunkSize not set"))
+                    log.info("[DONE] Initialize ScanMemoryManager")
+                }
+            }
+        }
+        return scanMemoryManager!!
+    }
 }
 
 class TellConnector(private val id: String, private val config: MutableMap<String, String>) : Connector {
 
-    val clientManager: ClientManager = ClientManagerSingleton.clientManager(config)
+    val clientManager: ClientManager = TellConnection.clientManager(config)
 
     override fun beginTransaction(isolationLevel: IsolationLevel, readOnly: Boolean): ConnectorTransactionHandle? {
         //if (!readOnly) return null;
@@ -66,11 +88,13 @@ class TellConnector(private val id: String, private val config: MutableMap<Strin
     }
 
     override fun getSplitManager(): ConnectorSplitManager? {
-        return TellSplitManager()
+        return TellSplitManager(
+                config["tell.numPartitions"]?.toInt() ?: throw RuntimeException("numPartitions not set"),
+                config["tell.partitionShift"]?.toInt() ?: throw RuntimeException("partitionShift not set"))
     }
 
     override fun getRecordSetProvider(): ConnectorRecordSetProvider? {
-        return TellRecordSetProvider()
+        return TellRecordSetProvider(TellConnection.scanMemoryManager(config), clientManager)
     }
 }
 
