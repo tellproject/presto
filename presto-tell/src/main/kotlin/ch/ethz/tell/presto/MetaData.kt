@@ -17,7 +17,6 @@ import com.fasterxml.jackson.databind.JsonDeserializer
 import com.fasterxml.jackson.databind.JsonNode
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
-import com.google.common.collect.ImmutableSet
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
@@ -182,12 +181,7 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
         }
         val columns = if (desiredColumns.isPresent) ImmutableList.copyOf(
                 desiredColumns.get()) else ImmutableList.copyOf(getColumnHandles(session, table).values)
-        val layout = ConnectorTableLayout(TellTableLayoutHandle(table, constraint.summary),
-                Optional.of(columns),
-                constraint.summary,
-                Optional.of(ImmutableSet.of<ColumnHandle>(PrimaryKeyColumnHandle())),
-                Optional.of(ImmutableList.of(constraint.summary)),
-                ImmutableList.of<LocalProperty<ColumnHandle>>())
+        val layout = ConnectorTableLayout(TellTableLayoutHandle(table, constraint.summary))
         return ImmutableList.of(ConnectorTableLayoutResult(layout, TupleDomain.none()))
     }
 
