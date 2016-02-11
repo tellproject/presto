@@ -3,10 +3,10 @@ package ch.ethz.kudu
 import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.ConnectorSplitManager
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle
-import org.kududb.client.KuduClient
-import org.kududb.client.KuduSession
+import org.kududb.client.AsyncKuduClient
+import org.kududb.client.AsyncKuduSession
 
-class KuduTransactionHandle(val client: KuduClient, val session: KuduSession) : ConnectorTransactionHandle
+class KuduTransactionHandle(val client: AsyncKuduClient, val session: AsyncKuduSession) : ConnectorTransactionHandle
 
 class KuduSplitManager : ConnectorSplitManager {
     override fun getSplits(transactionHandle: ConnectorTransactionHandle?,

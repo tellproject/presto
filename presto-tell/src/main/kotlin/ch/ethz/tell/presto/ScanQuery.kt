@@ -1,11 +1,10 @@
 package ch.ethz.tell.presto
 
 import ch.ethz.tell.*
-import ch.ethz.tell.ScanQuery.CmpType
 import ch.ethz.tell.ScanQuery.CmpType.*
 import com.facebook.presto.spi.ColumnHandle
 import com.facebook.presto.spi.predicate.*
-import com.facebook.presto.spi.predicate.Marker.Bound.*
+import com.facebook.presto.spi.predicate.Marker.Bound.EXACTLY
 import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonGetter
 import com.fasterxml.jackson.annotation.JsonProperty

@@ -1,6 +1,5 @@
 package ch.ethz.kudu
 
-import ch.ethz.kudu.ClientSingleton
 import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.ConnectorMetadata
 import com.facebook.presto.spi.type.*
@@ -9,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonGetter
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
+import com.stumbleupon.async.Deferred
 import org.kududb.ColumnSchema
 import org.kududb.Type
 import org.kududb.Type.*
@@ -19,10 +19,13 @@ class KuduColumnHandle(val column: ColumnSchema) : ColumnHandle
 
 class KuduTableLayoutHandle : ConnectorTableLayoutHandle
 
-class KuduTableHandle(val table: KuduTable) : ConnectorTableHandle {
+class KuduTableHandle(private val tableFuture: Deferred<KuduTable>) : ConnectorTableHandle {
     @get:JsonGetter
     val tableName: String
         get() = table.name
+
+    val table: KuduTable
+        get() = tableFuture.join()
 
     @JsonCreator
     constructor(@JsonProperty("tableName") tableName: String)
@@ -46,8 +49,9 @@ object DefaultSchema {
 
 class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMetadata {
     override fun listSchemaNames(session: ConnectorSession?): MutableList<String> {
-        val tables = transactionHandle.client.tablesList
-        return tables.tablesList
+        val tablesF = transactionHandle.client.tablesList
+        val tables = tablesF.join()
+        return ImmutableList.copyOf(tables.tablesList.map { it })
     }
 
     override fun getTableHandle(session: ConnectorSession?, tableName: SchemaTableName): ConnectorTableHandle? {
@@ -108,10 +112,11 @@ class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMeta
             throw RuntimeException("Schemas not supported by kudu but ${prefix.schemaName} was given")
         }
         val builder = ImmutableMap.builder<SchemaTableName, MutableList<ColumnMetadata>>()
-        transactionHandle.client.tablesList.tablesList.forEach {
+        transactionHandle.client.tablesList.join().tablesList.forEach {
             if (it.startsWith(prefix.tableName)) {
-                val table = transactionHandle.client.openTable(it)
+                val tableF = transactionHandle.client.openTable(it)
                 val cBuilder = ImmutableList.builder<ColumnMetadata>()
+                val table = tableF.join()
                 table.schema.columns.forEach {
                     cBuilder.add(ColumnMetadata(it.name, it.type.prestoType(), it.isKey))
                 }

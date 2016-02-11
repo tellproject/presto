@@ -8,7 +8,7 @@ import com.facebook.presto.spi.connector.ConnectorMetadata
 import com.facebook.presto.spi.connector.ConnectorSplitManager
 import com.facebook.presto.spi.transaction.IsolationLevel
 import com.google.common.collect.ImmutableList
-import org.kududb.client.KuduClient
+import org.kududb.client.AsyncKuduClient
 
 class KuduHandleResolver : ConnectorHandleResolver {
     override fun getTableHandleClass(): Class<out ConnectorTableHandle>? {
@@ -33,13 +33,13 @@ class KuduHandleResolver : ConnectorHandleResolver {
 }
 
 object ClientSingleton {
-    var client: KuduClient? = null
+    var client: AsyncKuduClient? = null
 
-    fun client(master: String): KuduClient {
+    fun client(master: String): AsyncKuduClient {
         if (client == null) {
             synchronized(this) {
                 if (client == null) {
-                    client = KuduClient.KuduClientBuilder(master).build()
+                    client = AsyncKuduClient.AsyncKuduClientBuilder(master).build()
                 }
             }
         }
@@ -47,7 +47,7 @@ object ClientSingleton {
     }
 }
 
-class KuduConnector(val client: KuduClient) : Connector {
+class KuduConnector(val client: AsyncKuduClient) : Connector {
     override fun beginTransaction(isolationLevel: IsolationLevel?, readOnly: Boolean): ConnectorTransactionHandle? {
         return KuduTransactionHandle(client, client.newSession())
     }
