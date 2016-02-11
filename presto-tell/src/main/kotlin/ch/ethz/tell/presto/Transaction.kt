@@ -52,7 +52,7 @@ fun toPredicateType(type: Field.FieldType, value: Any?): PredicateType {
     }
 }
 
-data class FieldMetadata(val fieldType: Field.FieldType, val idx: Short, val notNull: Boolean)
+data class FieldMetadata(val fieldType: Field.FieldType, val idx: Short, val notNull: Boolean, val name: String)
 
 class TellRecordCursor(val transaction: Transaction,
                        val scanMemoryManager: ScanMemoryManager,
@@ -67,7 +67,7 @@ class TellRecordCursor(val transaction: Transaction,
     var timer = 0L
     val fieldMeta = querySchema.fieldNames.map {
         val field = querySchema.getFieldByName(it)
-        FieldMetadata(field.fieldType, field.index, field.notNull)
+        FieldMetadata(field.fieldType, field.index, field.notNull, field.fieldName)
     }
 
     val unsafe = Unsafe.getUnsafe()
@@ -77,10 +77,11 @@ class TellRecordCursor(val transaction: Transaction,
         var res = -1
         for (i in 0..fieldMeta.size - 1) {
             if (it !is TellColumnHandle) throw RuntimeException("Unknown column")
-            if (fieldMeta[i].idx == it.field.index) {
+            if (fieldMeta[i].name == it.field.fieldName) {
                 res = i
             }
         }
+        assert(res != -1)
         res
     }
 
@@ -213,8 +214,9 @@ class TellRecordCursor(val transaction: Transaction,
         val pos = positions[posPos[field]]
         val offset = unsafe.getInt(pos)
         val length = unsafe.getInt(pos + 4) - offset
+        val strPos = record + offset
         val value = ByteArray(length, {
-            unsafe.getByte(pos + it)
+            unsafe.getByte(strPos + it)
         })
         when (fieldMeta[posPos[field]].fieldType) {
             TEXT -> return Slices.utf8Slice(value.toString(Charset.forName("UTF-8")))

@@ -31,10 +31,12 @@ class TellPredicate {
 }
 
 fun Schema.typeOf(id: Short): Field.FieldType {
-    if (id < this.fixedSizeFields().size) {
-        return this.fixedSizeFields()[id.toInt()]
+    val i = id.toInt()
+    val numFixedSize = this.fixedSizeFields().size
+    if (id < numFixedSize) {
+        return this.fixedSizeFields()[i]
     }
-    return this.variableSizedFields()[id.toInt()]
+    return this.variableSizedFields()[i - numFixedSize]
 }
 
 class TellScanQuery {
