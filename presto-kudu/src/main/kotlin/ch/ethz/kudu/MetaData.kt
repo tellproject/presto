@@ -1,4 +1,4 @@
-package kudu.ch.ethz.kudu
+package ch.ethz.kudu
 
 import ch.ethz.kudu.ClientSingleton
 import com.facebook.presto.spi.*

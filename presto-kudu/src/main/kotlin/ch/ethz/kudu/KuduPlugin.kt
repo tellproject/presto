@@ -1,14 +1,13 @@
 package ch.ethz.kudu
 
 import com.facebook.presto.spi.*
+import com.facebook.presto.spi.connector.*
 import com.facebook.presto.spi.connector.Connector
 import com.facebook.presto.spi.connector.ConnectorFactory
 import com.facebook.presto.spi.connector.ConnectorMetadata
 import com.facebook.presto.spi.connector.ConnectorSplitManager
-import com.facebook.presto.spi.connector.ConnectorTransactionHandle
 import com.facebook.presto.spi.transaction.IsolationLevel
 import com.google.common.collect.ImmutableList
-import kudu.ch.ethz.kudu.*
 import org.kududb.client.KuduClient
 
 class KuduHandleResolver : ConnectorHandleResolver {

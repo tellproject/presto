@@ -1,4 +1,4 @@
-package kudu.ch.ethz.kudu
+package ch.ethz.kudu
 
 import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.ConnectorSplitManager
