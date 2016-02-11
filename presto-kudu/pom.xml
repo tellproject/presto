@@ -9,7 +9,7 @@
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>presto-tell</artifactId>
+    <artifactId>presto-kudu</artifactId>
     <packaging>presto-plugin</packaging>
 
     <properties>
@@ -18,7 +18,23 @@
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
     </properties>
 
+    <repositories>
+        <repository>
+            <id>cdh.repo</id>
+            <name>Cloudera Repositories</name>
+            <url>https://repository.cloudera.com/artifactory/cloudera-repos</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
     <dependencies>
+        <dependency>
+            <groupId>org.kududb</groupId>
+            <artifactId>kudu-client</artifactId>
+            <version>0.6.0</version>
+        </dependency>
         <dependency>
             <groupId>com.facebook.presto</groupId>
             <artifactId>presto-spi</artifactId>
@@ -28,11 +44,6 @@
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
             <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>ch.ethz.tell</groupId>
-            <artifactId>telljava</artifactId>
-            <version>1.0</version>
         </dependency>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
@@ -109,3 +120,4 @@
 
 
 </project>
+
