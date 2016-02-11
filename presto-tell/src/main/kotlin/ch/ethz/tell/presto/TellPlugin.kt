@@ -24,7 +24,7 @@ class TellHandleResolver : ConnectorHandleResolver {
     }
 
     override fun getColumnHandleClass(): Class<out ColumnHandle>? {
-        return TellColumnHandleBase::class.java
+        return TellColumnHandle::class.java
     }
 
     override fun getSplitClass(): Class<out ConnectorSplit>? {

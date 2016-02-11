@@ -10,22 +10,15 @@ import com.facebook.presto.spi.predicate.TupleDomain
 import com.facebook.presto.spi.type.*
 import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonGetter
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.core.JsonParser
-import com.fasterxml.jackson.databind.DeserializationContext
-import com.fasterxml.jackson.databind.JsonDeserializer
-import com.fasterxml.jackson.databind.JsonNode
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
 import java.util.*
 
 object TableCache {
-    private var tables: ImmutableMap<String, Table>? = null
-    private var tableIds: ImmutableMap<Long, Table>? = null
+    var tables: ImmutableMap<String, Table>? = null
+    var tableIds: ImmutableMap<Long, Table>? = null
 
     private fun init(transaction: Transaction) {
         if (tables == null) {
@@ -69,10 +62,6 @@ object TableCache {
     }
 }
 
-object PrimaryKeyColumn {
-    val column = ColumnMetadata("__key", BigintType.BIGINT, true);
-}
-
 object DefaultSchema {
     val name = "default"
 }
@@ -90,7 +79,7 @@ class TellTableHandle(val table: Table,
     }
 }
 
-class TellTableLayoutHandle : ConnectorTableLayoutHandle {
+class TellTableLayoutHandleB : ConnectorTableLayoutHandle {
     @get:JsonGetter
     val table: TellTableHandle
     @get:JsonGetter
@@ -103,47 +92,37 @@ class TellTableLayoutHandle : ConnectorTableLayoutHandle {
     }
 }
 
-open class TellColumnHandleBase : ColumnHandle, JsonDeserializer<TellColumnHandleBase>() {
-    override fun deserialize(parser: JsonParser?, p1: DeserializationContext?): TellColumnHandleBase? {
-        val node = parser?.readValueAsTree<JsonNode>() ?: throw RuntimeException("parser is null")
-        val typename = node.get("typeName")
-        if (typename.toString() == "primary")
-            return PrimaryKeyColumnHandle()
-        else {
-            val field = node.get("fieldString").binaryValue()
-            val bi = ByteArrayInputStream(field)
-            val si = ObjectInputStream(bi)
-            val res = TellColumnHandle(si.readObject() as Field)
-            si.close()
-            bi.close()
-            return res
-        }
+class TellTableLayoutHandle : ConnectorTableLayoutHandle {
+    @get:JsonGetter
+    val scanQuery: TellScanQuery
+
+    @JsonCreator
+    constructor(@JsonProperty("scanQuery") scanQuery: TellScanQuery) {
+        this.scanQuery = scanQuery
     }
 }
 
-class PrimaryKeyColumnHandle : TellColumnHandleBase() {
-    @JsonProperty
-    fun getTypeName(): String {
-        return "primary"
-    }
-}
+class TellColumnHandle : ColumnHandle {
+    val field: Field
 
-class TellColumnHandle(val field: Field) : TellColumnHandleBase() {
-    @JsonProperty
-    fun getTypeName(): String {
-        return "column"
+    @JsonGetter("fieldName")
+    fun getFieldName(): String {
+        return field.fieldName
     }
 
-    @JsonProperty
-    fun getFieldString(): ByteArray {
-        val bo = ByteArrayOutputStream()
-        val so = ObjectOutputStream(bo)
-        so.writeObject(field)
-        so.flush()
-        val res = bo.toByteArray()
-        bo.close()
-        so.close()
-        return res
+    @get:JsonGetter
+    val tableId: Long
+
+    constructor(field: Field, tableId: Long) {
+        this.field = field
+        this.tableId = tableId
+    }
+
+    @JsonCreator
+    constructor(@JsonProperty("fieldName") fieldName: String,
+                @JsonProperty("tableId") tableId: Long) {
+        this.tableId = tableId
+        this.field = TableCache.tableIds!![tableId]?.schema?.getFieldByName(fieldName) ?: throw RuntimeException("Could not find table")
     }
 }
 
@@ -174,15 +153,13 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
     override fun getTableLayouts(session: ConnectorSession?,
                                  table: ConnectorTableHandle?,
                                  constraint: Constraint<ColumnHandle>,
-                                 desiredColumns: Optional<MutableSet<ColumnHandle>>): MutableList<ConnectorTableLayoutResult>? {
+                                 desiredColumns: Optional<MutableSet<ColumnHandle>>): MutableList<ConnectorTableLayoutResult> {
         if (table !is TellTableHandle) {
             val typename = table?.javaClass?.name ?: "null"
             throw RuntimeException("table is not from tell (type is $typename)")
         }
-        val columns = if (desiredColumns.isPresent) ImmutableList.copyOf(
-                desiredColumns.get()) else ImmutableList.copyOf(getColumnHandles(session, table).values)
-        val layout = ConnectorTableLayout(TellTableLayoutHandle(table, constraint.summary))
-        return ImmutableList.of(ConnectorTableLayoutResult(layout, TupleDomain.none()))
+        val layout = ConnectorTableLayout(TellTableLayoutHandle(TellScanQuery(table, constraint.summary, desiredColumns)))
+        return ImmutableList.of(ConnectorTableLayoutResult(layout, TupleDomain.all()))
     }
 
     override fun getTableLayout(session: ConnectorSession?,
@@ -214,9 +191,8 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
             throw RuntimeException("tableHandle is not from Tell")
         }
         val builder = ImmutableMap.builder<String, ColumnHandle>()
-        builder.put("__key", PrimaryKeyColumnHandle())
         tableHandle.table.schema.fieldNames.forEach {
-            builder.put(it, TellColumnHandle(tableHandle.table.schema.getFieldByName(it)))
+            builder.put(it, TellColumnHandle(tableHandle.table.schema.getFieldByName(it), tableHandle.table.tableId))
         }
         return builder.build()
     }
@@ -228,9 +204,6 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
     override fun getColumnMetadata(session: ConnectorSession?,
                                    tableHandle: ConnectorTableHandle?,
                                    columnHandle: ColumnHandle): ColumnMetadata? {
-        if (columnHandle is PrimaryKeyColumnHandle) {
-            return ColumnMetadata("__key", BigintType.BIGINT, true)
-        }
         if (columnHandle !is TellColumnHandle) {
             throw RuntimeException("columnHandle is not from Tell")
         }
@@ -247,7 +220,6 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
         tables.forEach {
             if (it.key.startsWith(prefix.tableName)) {
                 var b = ImmutableList.builder<ColumnMetadata>()
-                b.add(ColumnMetadata("__key", BigintType.BIGINT, true))
                 val schema = it.value.schema
                 schema.fieldNames.forEach {
                     val field = schema.getFieldByName(it)
