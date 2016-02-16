@@ -17,7 +17,7 @@ import java.util.*
 
 class KuduColumnHandle(val column: ColumnSchema) : ColumnHandle
 
-class KuduTableLayoutHandle : ConnectorTableLayoutHandle
+class KuduTableLayoutHandle(val query: KuduScanQuery) : ConnectorTableLayoutHandle
 
 class KuduTableHandle(private val tableFuture: Deferred<KuduTable>) : ConnectorTableHandle {
     @get:JsonGetter
@@ -62,8 +62,14 @@ class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMeta
     override fun getTableLayouts(session: ConnectorSession?,
                                  table: ConnectorTableHandle?,
                                  constraint: Constraint<ColumnHandle>?,
-                                 desiredColumns: Optional<MutableSet<ColumnHandle>>?): MutableList<ConnectorTableLayoutResult>? {
-        throw UnsupportedOperationException()
+                                 desiredColumns: Optional<MutableSet<ColumnHandle>>): MutableList<ConnectorTableLayoutResult>? {
+        if (table !is KuduTableHandle) throw RuntimeException("Unknown table handle")
+        if (constraint == null) throw RuntimeException("No constraints")
+        val query = KuduScanQuery(table, constraint.summary, desiredColumns)
+        return ImmutableList.of(
+                ConnectorTableLayoutResult(ConnectorTableLayout(KuduTableLayoutHandle(query)),
+                        query.unenforcedConstraints())
+        )
     }
 
     override fun getTableLayout(session: ConnectorSession?,

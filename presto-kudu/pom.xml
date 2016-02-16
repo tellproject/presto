@@ -13,7 +13,7 @@
     <packaging>presto-plugin</packaging>
 
     <properties>
-        <kotlin.version>1.0.0-rc-1036</kotlin.version>
+        <kotlin.version>1.0.0</kotlin.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
     </properties>

@@ -167,7 +167,7 @@ class TellScanQuery {
                         }
                     }
                 } else if (it.value.values is EquatableValueSet) {
-                    var values = it.value.values.discreteValues
+                    val values = it.value.values.discreteValues
                     if (values.values.size > 20) throw RuntimeException("Can not support so many distinct values")
                     if (values.isWhiteList) {
                         values.values.forEach {

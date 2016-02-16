@@ -5,6 +5,7 @@ import com.facebook.presto.spi.connector.*
 import com.facebook.presto.spi.connector.Connector
 import com.facebook.presto.spi.connector.ConnectorFactory
 import com.facebook.presto.spi.connector.ConnectorMetadata
+import com.facebook.presto.spi.connector.ConnectorRecordSetProvider
 import com.facebook.presto.spi.connector.ConnectorSplitManager
 import com.facebook.presto.spi.transaction.IsolationLevel
 import com.google.common.collect.ImmutableList
@@ -61,6 +62,9 @@ class KuduConnector(val client: AsyncKuduClient) : Connector {
         return KuduSplitManager()
     }
 
+    override fun getRecordSetProvider(): ConnectorRecordSetProvider? {
+        return KuduRecordSetProvider()
+    }
 }
 
 class KuduConnectionFactory : ConnectorFactory {
