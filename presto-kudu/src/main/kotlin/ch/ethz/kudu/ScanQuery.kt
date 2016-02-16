@@ -132,12 +132,16 @@ class KuduScanQuery {
         }
         // projection
         desiredColumns.ifPresent {
-            scanner.setProjectedColumnNames(ImmutableList.copyOf(
-                    it.map {
-                        if (it !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
-                        it.column.name
-                    }
-            ))
+            val builder = ImmutableList.builder<String>()
+            it.forEach {
+                if (it !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
+                if (it.column.isKey) builder.add(it.column.name)
+            }
+            it.forEach {
+                if (it !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
+                if (!it.column.isKey) builder.add(it.column.name)
+            }
+            scanner.setProjectedColumnNames(builder.build())
         }
         domain.domains.ifPresent {
             val domains = it
