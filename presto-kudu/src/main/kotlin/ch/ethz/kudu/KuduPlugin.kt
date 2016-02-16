@@ -50,7 +50,7 @@ object ClientSingleton {
 
 class KuduConnector(val client: AsyncKuduClient) : Connector {
     override fun beginTransaction(isolationLevel: IsolationLevel?, readOnly: Boolean): ConnectorTransactionHandle? {
-        return KuduTransactionHandle(client, client.newSession())
+        return KuduTransactionHandle()
     }
 
     override fun getMetadata(transactionHandle: ConnectorTransactionHandle?): ConnectorMetadata? {

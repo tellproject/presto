@@ -7,6 +7,9 @@ import com.facebook.presto.spi.connector.ConnectorTransactionHandle
 import com.facebook.presto.spi.type.BigintType
 import com.facebook.presto.spi.type.BooleanType
 import com.facebook.presto.spi.type.Type
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonGetter
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
 import com.stumbleupon.async.Deferred
@@ -16,52 +19,37 @@ import org.kududb.Type.*
 import org.kududb.client.*
 import java.util.concurrent.CompletableFuture
 
-class KuduTransactionHandle(val client: AsyncKuduClient, val session: AsyncKuduSession) : ConnectorTransactionHandle
+class KuduTransactionHandle : ConnectorTransactionHandle
 
 class KuduRecordCursor(val scanner: AsyncKuduScanner, val columns: MutableList<out KuduColumnHandle>) : RecordCursor {
     data class SizedEntry(val size: Long, val result: RowResult)
 
-    var current: MutableList<SizedEntry> = ImmutableList.of()
-    var size: Long = -1
+    var numRows: Long = 0
     var completed: Long = 0
-    var idx = -1
+    var current: RowResult? = null
+    var iter: RowResultIterator? = null
     var rowResultIteratorNext: Deferred<RowResultIterator>? = if (scanner.hasMoreRows()) scanner.nextRows() else null
     var timeNano: Long = 0L
 
     override fun advanceNextPosition(): Boolean {
-        if (!current.isEmpty() && current.size > ++idx) {
-            completed += current[idx].size
-            return true
-        }
-        if (rowResultIteratorNext != null) {
-            val begin = System.nanoTime()
-            val iter = rowResultIteratorNext!!.join()
-            timeNano += System.nanoTime() - begin
-            rowResultIteratorNext = null
-            if (scanner.hasMoreRows()) {
+        if ((iter == null || !iter!!.hasNext()) && rowResultIteratorNext != null) {
+            completed = 0
+            iter = rowResultIteratorNext!!.join()
+            numRows = iter!!.numRows.toLong()
+            if (scanner.hasMoreRows()){
                 rowResultIteratorNext = scanner.nextRows()
             }
-            if (iter.hasNext()) {
-                size = 0
-                val builder = ImmutableList.builder<SizedEntry>()
-                iter.map {
-                    val len = it.rowToString().length.toLong()
-                    builder.add(SizedEntry(len, it))
-                    size += len
-                }
-                current = builder.build()
-                idx = 0
-                completed = current[idx].size
-                return true
-            }
         }
-        current = ImmutableList.of()
-        idx = -1
+        if (iter != null && iter!!.hasNext()) {
+            current = iter!!.next()
+            completed += 1
+            return true
+        }
         return false
     }
 
     override fun getTotalBytes(): Long {
-        return size
+        return numRows
     }
 
     override fun getCompletedBytes(): Long {
@@ -77,12 +65,12 @@ class KuduRecordCursor(val scanner: AsyncKuduScanner, val columns: MutableList<o
     }
 
     override fun getBoolean(field: Int): Boolean {
-        return current[idx].result.getBoolean(columns[field].column.name)
+        return current!!.getBoolean(columns[field].column.name)
     }
 
     override fun getLong(field: Int): Long {
         val column = columns[field].column
-        val result = current[idx].result
+        val result = current!!
         when (column.type) {
             null -> throw RuntimeException("Column must not be null")
             INT8, INT16, INT32 -> return result.getInt(column.name).toLong()
@@ -93,7 +81,7 @@ class KuduRecordCursor(val scanner: AsyncKuduScanner, val columns: MutableList<o
 
     override fun getDouble(field: Int): Double {
         val column = columns[field].column
-        val result = current[idx].result
+        val result = current!!
         when (column.type) {
             null -> throw RuntimeException("Column must not be null")
             FLOAT -> return result.getFloat(column.name).toDouble()
@@ -104,7 +92,7 @@ class KuduRecordCursor(val scanner: AsyncKuduScanner, val columns: MutableList<o
 
     override fun getSlice(field: Int): Slice? {
         val column = columns[field].column
-        val result = current[idx].result
+        val result = current!!
         when (column.type) {
             BINARY -> return Slices.wrappedBuffer(result.getBinary(column.name))
             STRING -> return Slices.utf8Slice(result.getString(column.name))
@@ -119,7 +107,7 @@ class KuduRecordCursor(val scanner: AsyncKuduScanner, val columns: MutableList<o
     override fun isNull(field: Int): Boolean {
         val column = columns[field].column
         if (column.isNullable) {
-            return current[idx].result.isNull(column.name)
+            return current!!.isNull(column.name)
         }
         return false
     }
@@ -143,7 +131,18 @@ class KuduRecordSet(val tabletId: ByteArray,
     override fun cursor(): RecordCursor? {
         val tablets = layout.query.tableHandle.table.getTabletsLocations(1000)
         val tablet = tablets.find {
-            it.tabletId == tabletId
+            val res = false
+            if (it.tabletId.size != tabletId.size) false
+            else {
+                var result = true
+                for (i in 0..tabletId.size - 1) {
+                    if (it.tabletId[i] != tabletId[i]) {
+                        result = false
+                        break
+                    }
+                }
+                result
+            }
         } ?: throw RuntimeException("Invalid tablet id")
         val scanner = layout.query.create(tablet.partition.rangeKeyStart, tablet.partition.rangeKeyEnd)
         val builder = ImmutableList.builder<KuduColumnHandle>()
@@ -171,15 +170,17 @@ class KuduRecordSetProvider : ConnectorRecordSetProvider {
 
 class KuduSplitSource(val tablets: List<ByteArray>, val layout: KuduTableLayoutHandle) : ConnectorSplitSource {
     var pos = 0
+    var done = false
     override fun getDataSourceName(): String? {
         return "kudu"
     }
 
     override fun getNextBatch(maxSize: Int): CompletableFuture<MutableList<ConnectorSplit>>? {
         val builder = ImmutableList.builder<ConnectorSplit>()
-        for (i in pos..Math.min(pos + maxSize, tablets.size)) {
+        for (i in pos..Math.min(pos + maxSize, tablets.size - 1)) {
             builder.add(KuduSplit(tablets[i], layout))
         }
+        done = true
         return CompletableFuture.completedFuture(builder.build())
     }
 
@@ -187,7 +188,7 @@ class KuduSplitSource(val tablets: List<ByteArray>, val layout: KuduTableLayoutH
     }
 
     override fun isFinished(): Boolean {
-        return true
+        return done
     }
 }
 
@@ -204,7 +205,20 @@ class KuduSplitManager : ConnectorSplitManager {
     }
 }
 
-class KuduSplit(val tablet: ByteArray, val layout: KuduTableLayoutHandle) : ConnectorSplit {
+class KuduSplit : ConnectorSplit {
+    @get:JsonGetter
+    val tablet: ByteArray
+    @get:JsonGetter
+    val layout: KuduTableLayoutHandle
+
+    @JsonCreator
+    constructor(@JsonProperty("tablet") tablet: ByteArray,
+                @JsonProperty("layout") layout: KuduTableLayoutHandle)
+    {
+        this.tablet = tablet
+        this.layout = layout
+    }
+
     override fun isRemotelyAccessible(): Boolean {
         return true
     }

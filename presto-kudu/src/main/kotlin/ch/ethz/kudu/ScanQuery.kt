@@ -1,9 +1,10 @@
 package ch.ethz.kudu
 
 import com.facebook.presto.spi.ColumnHandle
-import com.facebook.presto.spi.ConnectorTableLayout
-import com.facebook.presto.spi.ConnectorTableLayoutHandle
 import com.facebook.presto.spi.predicate.*
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonGetter
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableMap
 import org.kududb.ColumnSchema
@@ -64,9 +65,24 @@ fun predicate(column: ColumnSchema, lower: Any?, upper: Any?): ColumnRangePredic
     return res
 }
 
-class KuduScanQuery(val tableHandle: KuduTableHandle,
-                    val domain: TupleDomain<ColumnHandle>,
-                    val desiredColumns: Optional<MutableSet<ColumnHandle>>) {
+class KuduScanQuery {
+
+    @get:JsonGetter
+    val tableHandle: KuduTableHandle
+    @get:JsonGetter
+    val domain: TupleDomain<ColumnHandle>
+    @get:JsonGetter
+    val desiredColumns: Optional<MutableSet<ColumnHandle>>
+
+    @JsonCreator
+    constructor(@JsonProperty("tableHandle") tableHandle: KuduTableHandle,
+                @JsonProperty("domain") domain: TupleDomain<ColumnHandle>,
+                @JsonProperty("desiredColumns") desiredColumns: Optional<MutableSet<ColumnHandle>>)
+    {
+        this.tableHandle = tableHandle
+        this.domain = domain
+        this.desiredColumns = desiredColumns
+    }
 
     fun unenforcedConstraints(): TupleDomain<ColumnHandle>? {
         val builder = ImmutableMap.builder<ColumnHandle, Domain>()
@@ -108,9 +124,12 @@ class KuduScanQuery(val tableHandle: KuduTableHandle,
         tableHandle.table.partitionSchema
         val scanner = ClientSingleton.client!!.newScannerBuilder(tableHandle.table)
         // range partition
-        val pbBuilder = ColumnRangePredicatePB.newBuilder()
-        pbBuilder.lowerBound = ZeroCopyLiteralByteString.wrap(lowerBound)
-        pbBuilder.upperBound = ZeroCopyLiteralByteString.wrap(upperBound)
+        if (!lowerBound.isEmpty() || !upperBound.isEmpty()) {
+            val pbBuilder = ColumnRangePredicatePB.newBuilder()
+            pbBuilder.lowerBound = ZeroCopyLiteralByteString.wrap(lowerBound)
+            pbBuilder.upperBound = ZeroCopyLiteralByteString.wrap(upperBound)
+            scanner.addColumnRangePredicatesRaw(pbBuilder.build().toByteArray())
+        }
         // projection
         desiredColumns.ifPresent {
             scanner.setProjectedColumnNames(ImmutableList.copyOf(

@@ -15,9 +15,41 @@ import org.kududb.Type.*
 import org.kududb.client.KuduTable
 import java.util.*
 
-class KuduColumnHandle(val column: ColumnSchema) : ColumnHandle
+class KuduColumnHandle : ColumnHandle {
+    val table: KuduTable;
+    val column: ColumnSchema
 
-class KuduTableLayoutHandle(val query: KuduScanQuery) : ConnectorTableLayoutHandle
+    @get:JsonGetter
+    val tableName: String
+        get() = table.name
+
+    @get:JsonGetter
+    val name: String
+        get() = column.name
+
+    constructor(table: KuduTable, column: ColumnSchema) {
+        this.table = table
+        this.column = column
+    }
+
+    @JsonCreator
+    constructor(@JsonProperty("tableName") tableName: String,
+                @JsonProperty("name") name: String) {
+        val table = ClientSingleton.client!!.openTable(tableName).join()
+        this.table = table
+        this.column = table.schema.getColumn(name)
+    }
+}
+
+class KuduTableLayoutHandle : ConnectorTableLayoutHandle {
+    @get:JsonGetter
+    val query: KuduScanQuery
+
+    @JsonCreator
+    constructor(@JsonProperty("query") query: KuduScanQuery) {
+        this.query = query
+    }
+}
 
 class KuduTableHandle(private val tableFuture: Deferred<KuduTable>) : ConnectorTableHandle {
     @get:JsonGetter
@@ -49,14 +81,12 @@ object DefaultSchema {
 
 class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMetadata {
     override fun listSchemaNames(session: ConnectorSession?): MutableList<String> {
-        val tablesF = transactionHandle.client.tablesList
-        val tables = tablesF.join()
-        return ImmutableList.copyOf(tables.tablesList.map { it })
+        return ImmutableList.of(DefaultSchema.name)
     }
 
     override fun getTableHandle(session: ConnectorSession?, tableName: SchemaTableName): ConnectorTableHandle? {
         if (tableName.schemaName != DefaultSchema.name) throw RuntimeException("Schemas not supported")
-        return KuduTableHandle(transactionHandle.client.openTable(tableName.tableName))
+        return KuduTableHandle(ClientSingleton.client!!.openTable(tableName.tableName))
     }
 
     override fun getTableLayouts(session: ConnectorSession?,
@@ -91,7 +121,9 @@ class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMeta
         if (schemaNameOrNull != null && schemaNameOrNull != DefaultSchema.name) {
             throw RuntimeException("Schemas not supported by kudu but $schemaNameOrNull was given")
         }
-        return ImmutableList.copyOf(listSchemaNames(session).map { SchemaTableName(DefaultSchema.name, it) })
+        return ImmutableList.copyOf(ClientSingleton.client!!.tablesList.join().tablesList.map {
+            SchemaTableName(DefaultSchema.name, it)
+        })
     }
 
     override fun getColumnHandles(session: ConnectorSession?,
@@ -99,7 +131,7 @@ class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMeta
         if (tableHandle !is KuduTableHandle) throw RuntimeException("Unknown table handle")
         val builder = ImmutableMap.builder<String, ColumnHandle>()
         tableHandle.table.schema.columns.forEach {
-            builder.put(it.name, KuduColumnHandle(it))
+            builder.put(it.name, KuduColumnHandle(tableHandle.table, it))
         }
         return builder.build()
     }
@@ -118,9 +150,9 @@ class KuduMetadata(val transactionHandle: KuduTransactionHandle) : ConnectorMeta
             throw RuntimeException("Schemas not supported by kudu but ${prefix.schemaName} was given")
         }
         val builder = ImmutableMap.builder<SchemaTableName, MutableList<ColumnMetadata>>()
-        transactionHandle.client.tablesList.join().tablesList.forEach {
+        ClientSingleton.client!!.tablesList.join().tablesList.forEach {
             if (it.startsWith(prefix.tableName)) {
-                val tableF = transactionHandle.client.openTable(it)
+                val tableF = ClientSingleton.client!!.openTable(it)
                 val cBuilder = ImmutableList.builder<ColumnMetadata>()
                 val table = tableF.join()
                 table.schema.columns.forEach {
