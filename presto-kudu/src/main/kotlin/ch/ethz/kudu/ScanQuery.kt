@@ -123,13 +123,6 @@ class KuduScanQuery {
     fun create(lowerBound: ByteArray, upperBound: ByteArray): AsyncKuduScanner {
         tableHandle.table.partitionSchema
         val scanner = ClientSingleton.client!!.newScannerBuilder(tableHandle.table)
-        // range partition
-        if (!lowerBound.isEmpty() || !upperBound.isEmpty()) {
-            val pbBuilder = ColumnRangePredicatePB.newBuilder()
-            pbBuilder.lowerBound = ZeroCopyLiteralByteString.wrap(lowerBound)
-            pbBuilder.upperBound = ZeroCopyLiteralByteString.wrap(upperBound)
-            scanner.addColumnRangePredicatesRaw(pbBuilder.build().toByteArray())
-        }
         // projection
         desiredColumns.ifPresent {
             val builder = ImmutableList.builder<String>()
@@ -184,6 +177,11 @@ class KuduScanQuery {
                 }
             }
         }
-        return scanner.build()
+        // range partition
+        if (!lowerBound.isEmpty() || !upperBound.isEmpty()) {
+            return scanner.lowerBoundPartitionKeyRaw(lowerBound).exclusiveUpperBoundPartitionKeyRaw(upperBound).build()
+        } else {
+            return scanner.build()
+        }
     }
 }
