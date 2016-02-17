@@ -19,7 +19,9 @@ import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 
 public interface ConnectorSplitManager
 {
-    default ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorTableLayoutHandle layout)
+    default ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle,
+                                           ConnectorSession session,
+                                           ConnectorTableLayoutHandle layout)
     {
         throw new UnsupportedOperationException("not yet implemented");
     }
