@@ -103,7 +103,7 @@ class KuduScanQuery {
                         }
                     }
                     val nonEnforcedRanges = rangeBbuilder.build()
-                    if (nonEnforcedRanges.isEmpty()) {
+                    if (!nonEnforcedRanges.isEmpty()) {
                         builder.put(it.key, Domain.create(ValueSet.copyOfRanges(
                                 it.value.type,
                                 nonEnforcedRanges
