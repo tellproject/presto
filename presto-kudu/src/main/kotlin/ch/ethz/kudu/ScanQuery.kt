@@ -84,6 +84,41 @@ class KuduScanQuery {
         this.desiredColumns = desiredColumns
     }
 
+    fun columnIndexes(columns: MutableList<out ColumnHandle>): Array<Int> {
+        val builder = ImmutableMap.builder<String, Int>()
+        var doProjection = false
+        desiredColumns.ifPresent {
+            doProjection = true
+            var cnt = 0
+            it.forEach {
+                if (it !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
+                if (it.column.isKey) builder.put(it.column.name, cnt)
+                ++cnt
+            }
+            it.forEach {
+                if (it !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
+                if (!it.column.isKey) builder.put(it.column.name, cnt)
+                ++cnt
+            }
+        }
+        val map: MutableMap<String, Int>
+        if (doProjection) {
+            map = builder.build()
+        } else {
+            var cnt = 0
+            tableHandle.table.schema.columns.forEach {
+                builder.put(it.name, cnt)
+                ++cnt
+            }
+            map = builder.build()
+        }
+        return Array(columns.size, {
+            val column = columns[it]
+            if (column !is KuduColumnHandle) throw RuntimeException("Unknown column handle")
+            map[column.name] ?: throw RuntimeException("Column was not projected")
+        })
+    }
+
     fun unenforcedConstraints(): TupleDomain<ColumnHandle>? {
         val builder = ImmutableMap.builder<ColumnHandle, Domain>()
         domain.domains.ifPresent {
