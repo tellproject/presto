@@ -6,11 +6,13 @@ import com.facebook.presto.spi.*
 import com.facebook.presto.spi.connector.ConnectorRecordSetProvider
 import com.facebook.presto.spi.connector.ConnectorSplitManager
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle
+import com.facebook.presto.spi.type.BigintType
 import com.facebook.presto.spi.type.Type
 import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonGetter
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.common.collect.ImmutableList
+import com.google.common.collect.ImmutableMap
 import io.airlift.slice.Slice
 import io.airlift.slice.Slices
 import org.apache.commons.logging.LogFactory
@@ -72,17 +74,21 @@ class TellRecordCursor(val transaction: Transaction,
 
     val unsafe = Unsafe.getUnsafe()
 
-    val positions = Array(fieldMeta.size, { 0.toLong() })
+    val positions = Array(fieldMeta.size + 1, { 0.toLong() })
     val posPos = columns.map {
+        if (it !is TellColumnHandle) throw RuntimeException("Unknown column")
         var res = -1
-        for (i in 0..fieldMeta.size - 1) {
-            if (it !is TellColumnHandle) throw RuntimeException("Unknown column")
-            if (fieldMeta[i].name == it.field.fieldName) {
-                res = i
+        if (it.field == null) {
+            0
+        } else {
+            for (i in 0..fieldMeta.size - 1) {
+                if (fieldMeta[i].name == it.field.fieldName) {
+                    res = i + 1
+                }
             }
+            assert(res != -1)
+            res
         }
-        assert(res != -1)
-        res
     }
 
     fun next() {
@@ -90,7 +96,8 @@ class TellRecordCursor(val transaction: Transaction,
             throw NoSuchElementException("End of stream")
         }
 
-        // Skip key
+        // key
+        positions[0] = chunkPos
         chunkPos += 8
 
         // Skip header
@@ -107,7 +114,7 @@ class TellRecordCursor(val transaction: Transaction,
 
         for (i in 0..fieldMeta.size - 1) {
             val field = fieldMeta[i]
-            positions[i] = chunkPos
+            positions[i+1] = chunkPos
             when (field.fieldType) {
                 SMALLINT -> chunkPos += 2
                 INT, FLOAT -> chunkPos += 4
@@ -179,7 +186,10 @@ class TellRecordCursor(val transaction: Transaction,
     override fun getType(field: Int): Type? {
         val handle = columns[field]
         if (handle !is TellColumnHandle) throw RuntimeException("Unknown column hanle")
-        return handle.field.prestoType()
+        if (handle.field == null)
+            return BigintType.BIGINT
+        else
+            return handle.field.prestoType()
     }
 
     override fun getBoolean(field: Int): Boolean {
@@ -259,7 +269,10 @@ class TellRecordSet(val scanMemoryManager: ScanMemoryManager,
     override fun getColumnTypes(): MutableList<Type>? {
         return columns.map {
             if (it !is TellColumnHandle) throw RuntimeException("Unknown column handle")
-            it.field.prestoType()
+            if (it.field == null)
+                BigintType.BIGINT
+            else
+                it.field.prestoType()
         }.toMutableList()
     }
 
@@ -269,6 +282,7 @@ class TellRecordSet(val scanMemoryManager: ScanMemoryManager,
                 if (split.numSplits == 1)
                     q.create(0, 0, 0)
                 else q.create(split.partitionShift, split.splitNum, split.numSplits)
+        log.warn("Start scan: shift: ${split.partitionShift} partition: ${split.splitNum} partitions: ${split.numSplits}")
         val hasProjections = q.queryType == ScanQuery.QueryType.PROJECTION
         val querySchema = if (hasProjections) query.resultSchema else split.layout.scanQuery.table.schema
         log.warn("Starting scan")
@@ -307,9 +321,14 @@ class TellSplitSource(val layout: TellTableLayoutHandle,
     override fun getNextBatch(maxSize: Int): CompletableFuture<MutableList<ConnectorSplit>>? {
         finished = true
         val partitions = Math.min(maxSize, numPartitions)
-        val result = ImmutableList.builder<ConnectorSplit>()
-        for (i in 1..partitions) result.add(TellSplit(layout, transactionId, i - 1, numPartitions, partitionShift))
-        return CompletableFuture.completedFuture(result.build())
+        val builder = ImmutableList.builder<ConnectorSplit>()
+        for (i in 1..partitions) {
+            builder.add(TellSplit(layout, transactionId, i - 1, numPartitions, partitionShift))
+            log.warn("Built split ${i - 1} of $numPartitions")
+        }
+        val result = builder.build()
+        log.warn("Generated ${result.size} splits")
+        return CompletableFuture.completedFuture(result)
     }
 
     override fun close() {
@@ -357,8 +376,11 @@ class TellSplit : ConnectorSplit {
     }
 
     override fun getInfo(): Any? {
-        log.info("getInfo -> $transactionId")
-        return transactionId
+        return ImmutableMap.builder<String, Any>()
+                .put("table", layout.scanQuery.table.tableName)
+                .put("tableId", layout.scanQuery.table.tableId)
+                .put("partitionId", splitNum)
+                .build();
     }
 }
 

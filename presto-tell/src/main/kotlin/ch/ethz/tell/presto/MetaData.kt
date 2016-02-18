@@ -79,19 +79,6 @@ class TellTableHandle(val table: Table,
     }
 }
 
-class TellTableLayoutHandleB : ConnectorTableLayoutHandle {
-    @get:JsonGetter
-    val table: TellTableHandle
-    @get:JsonGetter
-    val domain: TupleDomain<ColumnHandle>
-
-    @JsonCreator
-    constructor(@JsonProperty("table") table: TellTableHandle, @JsonProperty("domain") domain: TupleDomain<ColumnHandle>) {
-        this.table = table
-        this.domain = domain
-    }
-}
-
 class TellTableLayoutHandle : ConnectorTableLayoutHandle {
     @get:JsonGetter
     val scanQuery: TellScanQuery
@@ -102,18 +89,21 @@ class TellTableLayoutHandle : ConnectorTableLayoutHandle {
     }
 }
 
+val KeyName = "__key"
+
 class TellColumnHandle : ColumnHandle {
-    val field: Field
+    val field: Field?
 
     @JsonGetter("fieldName")
     fun getFieldName(): String {
+        if (field == null) return KeyName
         return field.fieldName
     }
 
     @get:JsonGetter
     val tableId: Long
 
-    constructor(field: Field, tableId: Long) {
+    constructor(field: Field?, tableId: Long) {
         this.field = field
         this.tableId = tableId
     }
@@ -122,7 +112,10 @@ class TellColumnHandle : ColumnHandle {
     constructor(@JsonProperty("fieldName") fieldName: String,
                 @JsonProperty("tableId") tableId: Long) {
         this.tableId = tableId
-        this.field = TableCache.tableIds!![tableId]?.schema?.getFieldByName(fieldName) ?: throw RuntimeException("Could not find table")
+        if (fieldName == KeyName)
+            this.field = null
+        else
+            this.field = TableCache.tableIds!![tableId]?.schema?.getFieldByName(fieldName) ?: throw RuntimeException("Could not find table")
     }
 }
 
@@ -194,20 +187,27 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
         tableHandle.table.schema.fieldNames.forEach {
             builder.put(it, TellColumnHandle(tableHandle.table.schema.getFieldByName(it), tableHandle.table.tableId))
         }
+        builder.put(KeyName, TellColumnHandle(null, tableHandle.table.tableId))
         return builder.build()
     }
 
-    private fun getMetadata(name: String, field: Field): ColumnMetadata {
-        return ColumnMetadata(name, field.prestoType(), false)
+    private fun getMetadata(name: String, field: Field?): ColumnMetadata {
+        if (field == null)
+            return ColumnMetadata(name, BigintType.BIGINT, true)
+        else
+            return ColumnMetadata(name, field.prestoType(), false)
     }
 
     override fun getColumnMetadata(session: ConnectorSession?,
                                    tableHandle: ConnectorTableHandle?,
-                                   columnHandle: ColumnHandle): ColumnMetadata? {
+                                   columnHandle: ColumnHandle): ColumnMetadata {
         if (columnHandle !is TellColumnHandle) {
             throw RuntimeException("columnHandle is not from Tell")
         }
-        return getMetadata(columnHandle.field.fieldName, columnHandle.field)
+        if (columnHandle.field == null)
+            return getMetadata(KeyName, null)
+        else
+            return getMetadata(columnHandle.field.fieldName, columnHandle.field)
     }
 
     override fun listTableColumns(session: ConnectorSession?,

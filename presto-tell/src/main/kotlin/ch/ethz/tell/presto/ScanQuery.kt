@@ -66,7 +66,8 @@ class TellScanQuery {
         projections.forEach {
             if (it !is TellColumnHandle) throw RuntimeException("Unknown column type")
             val field = it.field
-            query.addProjection(Projection(field.index, field.fieldName, field.fieldType, field.notNull))
+            if (field != null)
+                query.addProjection(Projection(field.index, field.fieldName, field.fieldType, field.notNull))
         }
         return query
     }
