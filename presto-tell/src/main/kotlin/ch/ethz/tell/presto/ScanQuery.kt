@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonGetter
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.common.collect.ImmutableList
+import org.apache.commons.logging.LogFactory
 import java.util.*
 
 class TellPredicate {
@@ -48,12 +49,15 @@ class TellScanQuery {
     @get:JsonGetter
     val selections: MutableList<MutableList<TellPredicate>>
 
+    val log = LogFactory.getLog(TellScanQuery::class.java)
+
     val table: Table
         get() = tableHandle.table
 
     fun create(partitionShift: Int, partitionKey: Int, partitionValue: Int): ScanQuery {
+        log.warn("Create ScanQuery: key: $partitionKey value: $partitionValue")
         val schema = table.schema
-        val query = ScanQuery(table.tableName, partitionShift, partitionKey, partitionValue)
+        val query = ScanQuery(table.tableName, partitionShift, partitionValue, partitionKey)
         selections.forEach {
             val clause = CNFClause()
             it.forEach {
@@ -63,11 +67,21 @@ class TellScanQuery {
         }
         assert(projections.isEmpty() && queryType == ScanQuery.QueryType.FULL
                 || !projections.isEmpty() && queryType == ScanQuery.QueryType.PROJECTION)
+        var addedProjections = false
         projections.forEach {
             if (it !is TellColumnHandle) throw RuntimeException("Unknown column type")
             val field = it.field
-            if (field != null)
+            if (field != null) {
                 query.addProjection(Projection(field.index, field.fieldName, field.fieldType, field.notNull))
+                addedProjections = true
+            }
+        }
+        // corner case for projection of __key
+        if (!addedProjections && queryType != ScanQuery.QueryType.FULL) {
+            // just get the first field to do a projection. Our schema reordering
+            // guarantees, that the first field will be the smallest one
+            val field = table.schema[0]
+            query.addProjection(Projection(field.index, field.fieldName, field.fieldType, field.notNull))
         }
         return query
     }

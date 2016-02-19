@@ -184,16 +184,16 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
             throw RuntimeException("tableHandle is not from Tell")
         }
         val builder = ImmutableMap.builder<String, ColumnHandle>()
+        builder.put(KeyName, TellColumnHandle(null, tableHandle.table.tableId))
         tableHandle.table.schema.fieldNames.forEach {
             builder.put(it, TellColumnHandle(tableHandle.table.schema.getFieldByName(it), tableHandle.table.tableId))
         }
-        builder.put(KeyName, TellColumnHandle(null, tableHandle.table.tableId))
         return builder.build()
     }
 
     private fun getMetadata(name: String, field: Field?): ColumnMetadata {
         if (field == null)
-            return ColumnMetadata(name, BigintType.BIGINT, true)
+            return ColumnMetadata(name, BigintType.BIGINT, false)
         else
             return ColumnMetadata(name, field.prestoType(), false)
     }
@@ -221,6 +221,7 @@ class TellMetadata(val transaction: Transaction) : ConnectorMetadata {
             if (it.key.startsWith(prefix.tableName)) {
                 var b = ImmutableList.builder<ColumnMetadata>()
                 val schema = it.value.schema
+                b.add(getMetadata(KeyName, null))
                 schema.fieldNames.forEach {
                     val field = schema.getFieldByName(it)
                     b.add(getMetadata(field.fieldName, field))

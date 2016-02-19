@@ -4,15 +4,17 @@ import ch.ethz.tell.ClientManager
 import ch.ethz.tell.ScanMemoryManager
 import ch.ethz.tell.Transaction
 import com.facebook.presto.spi.*
+import com.facebook.presto.spi.connector.*
 import com.facebook.presto.spi.connector.Connector
 import com.facebook.presto.spi.connector.ConnectorFactory
 import com.facebook.presto.spi.connector.ConnectorMetadata
 import com.facebook.presto.spi.connector.ConnectorRecordSetProvider
 import com.facebook.presto.spi.connector.ConnectorSplitManager
-import com.facebook.presto.spi.connector.ConnectorTransactionHandle
 import com.facebook.presto.spi.transaction.IsolationLevel
+import com.facebook.presto.spi.type.Type
 import com.google.common.collect.ImmutableList
 import org.apache.commons.logging.LogFactory
+import java.util.function.ToIntFunction
 
 class TellHandleResolver : ConnectorHandleResolver {
     override fun getTableHandleClass(): Class<out ConnectorTableHandle>? {
@@ -94,7 +96,7 @@ class TellConnector(private val id: String, private val config: MutableMap<Strin
     }
 
     override fun getRecordSetProvider(): ConnectorRecordSetProvider? {
-        return TellRecordSetProvider(TellConnection.scanMemoryManager(config), clientManager)
+        return TellRecordSetProvider(TellConnection.scanMemoryManager(config))
     }
 }
 

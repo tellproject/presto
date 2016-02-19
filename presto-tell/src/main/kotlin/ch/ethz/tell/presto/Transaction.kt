@@ -25,10 +25,11 @@ class TellTransactionHandle(val transaction: Transaction) : ConnectorTransaction
     constructor(@JsonProperty("transactionId") transactionId: Long) : this(
             Transaction.startTransaction(transactionId, TellConnection.clientManager))
 
-    @JsonProperty
-    fun getTransactionId(): Long {
-        return transaction.transactionId
-    }
+    @get:JsonProperty
+    val transactionId: Long
+        get() {
+            return transaction.transactionId
+        }
 }
 
 fun toPredicateType(type: Field.FieldType, value: Any?): PredicateType {
@@ -72,6 +73,10 @@ class TellRecordCursor(val transaction: Transaction,
         FieldMetadata(field.fieldType, field.index, field.notNull, field.fieldName)
     }
 
+    var counter = 0
+
+    val log = LogFactory.getLog(TellRecordCursor::class.java)
+
     val unsafe = Unsafe.getUnsafe()
 
     val positions = Array(fieldMeta.size + 1, { 0.toLong() })
@@ -92,6 +97,7 @@ class TellRecordCursor(val transaction: Transaction,
     }
 
     fun next() {
+        ++counter
         if (!hasNext()) {
             throw NoSuchElementException("End of stream")
         }
@@ -199,7 +205,10 @@ class TellRecordCursor(val transaction: Transaction,
 
     override fun getLong(field: Int): Long {
         val pos = positions[posPos[field]]
-        when (fieldMeta[posPos[field]].fieldType) {
+        if (posPos[field] == 0) {
+            return unsafe.getLong(positions[0])
+        }
+        when (fieldMeta[posPos[field] - 1].fieldType) {
             SMALLINT -> return unsafe.getShort(pos).toLong()
             INT -> return unsafe.getInt(pos).toLong()
             BIGINT -> return unsafe.getLong(pos)
@@ -209,7 +218,7 @@ class TellRecordCursor(val transaction: Transaction,
 
     override fun getDouble(field: Int): Double {
         val pos = positions[posPos[field]]
-        when (fieldMeta[posPos[field]].fieldType) {
+        when (fieldMeta[posPos[field] - 1].fieldType) {
             FLOAT -> return unsafe.getFloat(pos).toDouble()
             DOUBLE -> return unsafe.getDouble(pos)
             else -> throw RuntimeException("Unexpected type: ${fieldMeta[posPos[field]].fieldType}")
@@ -217,7 +226,7 @@ class TellRecordCursor(val transaction: Transaction,
     }
 
     override fun getSlice(field: Int): Slice? {
-        when (fieldMeta[posPos[field]].fieldType) {
+        when (fieldMeta[posPos[field] - 1].fieldType) {
             BLOB, TEXT -> {}
             else -> throw RuntimeException("Unexcpected operation")
         }
@@ -228,7 +237,7 @@ class TellRecordCursor(val transaction: Transaction,
         val value = ByteArray(length, {
             unsafe.getByte(strPos + it)
         })
-        when (fieldMeta[posPos[field]].fieldType) {
+        when (fieldMeta[posPos[field] - 1].fieldType) {
             TEXT -> return Slices.utf8Slice(value.toString(Charset.forName("UTF-8")))
             BLOB -> return Slices.wrappedBuffer(value, 0, value.size)
             else -> throw RuntimeException("Unexpected type: ${fieldMeta[posPos[field]].fieldType}")
@@ -240,7 +249,8 @@ class TellRecordCursor(val transaction: Transaction,
     }
 
     override fun isNull(field: Int): Boolean {
-        val f = fieldMeta[posPos[field]]
+        if (posPos[field] == 0) return false
+        val f = fieldMeta[posPos[field] - 1]
         if (!f.notNull) {
             var idx = 0
             for (fM in fieldMeta) {
@@ -256,6 +266,7 @@ class TellRecordCursor(val transaction: Transaction,
 
     override fun close() {
         while (hasNext()) next()
+        log.warn("Finished scanning Split ${query.partitionValue} of ${query.partitionKey} - scanned $counter tuples")
     }
 }
 
@@ -291,8 +302,7 @@ class TellRecordSet(val scanMemoryManager: ScanMemoryManager,
 
 }
 
-class TellRecordSetProvider(val scanMemoryManager: ScanMemoryManager,
-                            val clientManager: ClientManager) : ConnectorRecordSetProvider {
+class TellRecordSetProvider(val scanMemoryManager: ScanMemoryManager) : ConnectorRecordSetProvider {
     val log = LogFactory.getLog(TellRecordSetProvider::class.java)
 
     override fun getRecordSet(transactionHandle: ConnectorTransactionHandle?,
@@ -302,41 +312,7 @@ class TellRecordSetProvider(val scanMemoryManager: ScanMemoryManager,
         log.info("passed transaction: ${(transactionHandle as TellTransactionHandle).transaction.transactionId}")
         if (split !is TellSplit) throw RuntimeException("Unknown split")
         if (transactionHandle !is TellTransactionHandle) throw RuntimeException("Unknown transaction handle")
-        val builder = ImmutableList.builder<TellColumnHandle>()
         return TellRecordSet(scanMemoryManager, transactionHandle.transaction, split, columns)
-    }
-}
-
-class TellSplitSource(val layout: TellTableLayoutHandle,
-                      val transactionId: Long,
-                      val numPartitions: Int,
-                      val partitionShift: Int) : ConnectorSplitSource {
-    val log = LogFactory.getLog(TellSplitSource::class.java)
-    var finished = false
-
-    override fun getDataSourceName(): String? {
-        return "tell"
-    }
-
-    override fun getNextBatch(maxSize: Int): CompletableFuture<MutableList<ConnectorSplit>>? {
-        finished = true
-        val partitions = Math.min(maxSize, numPartitions)
-        val builder = ImmutableList.builder<ConnectorSplit>()
-        for (i in 1..partitions) {
-            builder.add(TellSplit(layout, transactionId, i - 1, numPartitions, partitionShift))
-            log.warn("Built split ${i - 1} of $numPartitions")
-        }
-        val result = builder.build()
-        log.warn("Generated ${result.size} splits")
-        return CompletableFuture.completedFuture(result)
-    }
-
-    override fun close() {
-        log.info("close")
-    }
-
-    override fun isFinished(): Boolean {
-        return finished
     }
 }
 
@@ -352,12 +328,15 @@ class TellSplit : ConnectorSplit {
     @get:JsonGetter
     val partitionShift: Int
 
+    val log = LogFactory.getLog(TellSplit::class.java)
+
     @JsonCreator
     constructor(@JsonProperty("layout") layout: TellTableLayoutHandle,
                 @JsonProperty("transactionId") transactionId: Long,
-                @JsonProperty("splitId") splitNum: Int,
+                @JsonProperty("splitNum") splitNum: Int,
                 @JsonProperty("numSplits") numSplits: Int,
                 @JsonProperty("partitionShift") partitionShift: Int) {
+        log.warn("deserialized/created split: {table=${layout.scanQuery.table.tableName}, split=$splitNum, totalSplit=$numSplits}")
         this.layout = layout
         this.transactionId = transactionId
         this.splitNum = splitNum
@@ -365,14 +344,26 @@ class TellSplit : ConnectorSplit {
         this.partitionShift = partitionShift
     }
 
-    val log = LogFactory.getLog(TellSplit::class.java)
-
     override fun isRemotelyAccessible(): Boolean {
         return true
     }
 
     override fun getAddresses(): MutableList<HostAddress>? {
         return ImmutableList.of<HostAddress>()
+    }
+
+    override fun toString(): String {
+        return "{table=${layout.scanQuery.table.tableName}, split=$splitNum, totalSplit=$numSplits}"
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (other !is TellSplit) return false
+        return other.layout.scanQuery.table.tableId == layout.scanQuery.table.tableId &&
+                other.splitNum == splitNum && other.layout.scanQuery == layout.scanQuery
+    }
+
+    override fun hashCode(): Int {
+        return toString().hashCode()
     }
 
     override fun getInfo(): Any? {
@@ -392,6 +383,11 @@ class TellSplitManager(val numPartitions: Int, val partitionShift: Int) : Connec
             throw RuntimeException("wrong transaction handle")
         }
         if (layout !is TellTableLayoutHandle) throw RuntimeException("Wrong layout")
-        return TellSplitSource(layout, transactionHandle.transaction.transactionId, numPartitions, partitionShift)
+        if (transactionHandle !is TellTransactionHandle) throw RuntimeException("Unknown transaction handle")
+        val splits = Array(numPartitions, {
+            TellSplit(layout, transactionHandle.transactionId, it, numPartitions, partitionShift)
+        })
+        return FixedSplitSource("tell", splits.toList())
+        //return TellSplitSource(layout, transactionHandle.transaction.transactionId, numPartitions, partitionShift)
     }
 }
