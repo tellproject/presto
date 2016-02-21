@@ -82,6 +82,16 @@ class TellConnector(private val id: String, private val config: MutableMap<Strin
         return TellTransactionHandle(Transaction.startTransaction(clientManager))
     }
 
+    override fun commit(transactionHandle: ConnectorTransactionHandle?) {
+        if (transactionHandle !is TellTransactionHandle) throw RuntimeException("Unkown transaction handle")
+        transactionHandle.transaction.commit()
+    }
+
+    override fun rollback(transactionHandle: ConnectorTransactionHandle?) {
+        if (transactionHandle !is TellTransactionHandle) throw RuntimeException("Unkown transaction handle")
+        transactionHandle.transaction.abort()
+    }
+
     override fun getMetadata(transactionHandle: ConnectorTransactionHandle?): ConnectorMetadata? {
         if (transactionHandle is TellTransactionHandle) {
             return TellMetadata(transactionHandle.transaction)
